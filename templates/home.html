@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>XRP Testnet Wallet</title>
+
+  <!-- Bootstrap CSS -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-image: url('{{ url_for('static', filename='background.PNG') }}');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-attachment: fixed;
+      min-height: 100vh;
+      padding: 0;
+    }
+    .container-fluid {
+      padding: 15px;
+      max-width: 100%;
+    }
+    .fixed-bottom-card {
+      position: fixed;
+      bottom: 170px;
+      left: 30px;
+      right: 30px;
+      background-color: rgba(255, 255, 255, 1);
+      border-radius: 10px 10px 0 0;
+      padding: 8px;
+    }
+    .fixed-bottom-card .card {
+      margin: 0;
+      border: none;
+    }
+    .fixed-bottom-card h5 {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+    .fixed-bottom-card h6 {
+      font-size: 0.9rem;
+      margin-bottom: 0.25rem;
+    }
+    .fixed-bottom-card p {
+      font-size: 0.8rem;
+      margin-bottom: 0;
+    }
+    .fixed-bottom-card img {
+      max-width: 19px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container-fluid py-3">
+    <!-- Alerts -->
+    {% if message %}
+    <div class="alert alert-success" role="alert">
+      {{ message }}
+    </div>
+    {% endif %}
+    {% if error %}
+    <div class="alert alert-danger" role="alert">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- Create Wallet Section (only shows if wallet isn't created yet) -->
+    {% if not global_temp_address or not global_temp_seed %}
+    <div class="fixed-bottom-card">
+      <div class="card">
+        <div class="card-body">
+          <h5>仮想通貨の取り扱いを始める</h5>
+          <!-- Button that triggers the wallet creation + onboarding modal -->
+          <button
+            type="button"
+            class="btn btn-primary w-100"
+            id="createWalletButton"
+          >
+            Create リップル（XRP）Wallet
+          </button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Wallet Details (only shows if wallet is created) -->
+    {% if global_temp_address and global_temp_seed %}
+    <div class="fixed-bottom-card">
+      <div class="d-flex align-items-center">
+        <!-- Icon Section -->
+        <div
+          class="me-3 d-flex justify-content-center align-items-center rounded-circle icon-circle"
+        >
+          <img
+            src="{{ url_for('static', filename='xrp.png') }}"
+            alt="XRP Icon"
+            class="img-fluid"
+          />
+        </div>
+
+        <!-- Details Section -->
+        <div class="flex-grow-1">
+          <h6 class="mb-1">リップル（XRP）Wallet</h6>
+          <p class="text-muted small">
+            {{ wallet_details.balance if wallet_details.balance else "0" }} XRP
+          </p>
+        </div>
+
+        <!-- Amount Section -->
+        <div class="text-end">
+            <h5 class="mb-0">
+              {{ (wallet_details.xrp * wallet_details.balance) | int if wallet_details.xrp else 0 }}円
+            </h5>
+            <p class="text-muted small">
+              1xrp = {{ wallet_details.xrp if wallet_details.xrp else "0" }}円
+            </p>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Onboarding/Creating Modal -->
+  <div
+    class="modal fade"
+    id="onboardingModal"
+    tabindex="-1"
+    aria-labelledby="onboardingModalLabel"
+    aria-hidden="true"
+  >
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-body text-center p-4">
+          <!-- XRP Image (any size you like) -->
+          <img
+            src="{{ url_for('static', filename='xrp.png') }}"
+            alt="XRP Image"
+            class="img-fluid mb-3"
+            style="max-width: 80px;"
+          />
+          <!-- Explanation text -->
+          <h5 class="mb-3" id="onboardingModalLabel">
+            Creating Your Ripple (XRP) Wallet
+          </h5>
+          <p>
+            Please wait while we set up your wallet on the Testnet.
+            <br />
+            This may take a few seconds...
+          </p>
+          <!-- Optional loading spinner -->
+          <div class="spinner-border text-primary my-3" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+
+          <!-- If you want to show dynamic messages or errors, you can place them here -->
+          <p id="createWalletMessage" class="text-danger"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- End Onboarding/Creating Modal -->
+
+  <!-- Bootstrap JS (including Popper.js) -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"
+  ></script>
+
+  <script>
+    // Reference to the modal (Bootstrap 5)
+    let onboardingModal = new bootstrap.Modal(document.getElementById('onboardingModal'));
+
+    // Button event listener
+    const createWalletBtn = document.getElementById('createWalletButton');
+    if (createWalletBtn) {
+      createWalletBtn.addEventListener('click', async () => {
+        // 1. Show modal immediately
+        onboardingModal.show();
+
+        // 2. Call the /create_wallet endpoint in the background
+        try {
+          // We assume your endpoint returns a JSON response when successful.
+          // If your Flask route simply returns a redirect or no content,
+          // adjust accordingly or return JSON (status, etc.)
+          const response = await fetch('/create_wallet');
+          
+          if (!response.ok) {
+            throw new Error('Failed to create wallet');
+          }
+
+          // 3. Once the wallet is created, reload the page (so the new wallet details appear)
+          window.location.reload();
+
+        } catch (err) {
+          // Show error inside modal, or handle how you like
+          document.getElementById('createWalletMessage').textContent = err.message;
+          console.error(err);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
