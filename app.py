@@ -1,191 +1,215 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for
+from xrpl.clients import JsonRpcClient
 from xrpl.models.requests import AccountInfo
 from xrpl.wallet import generate_faucet_wallet, Wallet
-import xrpl
-from xrpl.models.transactions import Payment
+from xrpl.models.transactions import Payment, TrustSet
+from xrpl.models.amounts import IssuedCurrencyAmount
 from xrpl.transaction import sign, autofill, submit_and_wait
 from datetime import datetime, timedelta
-import json  # For JSON serialization
 import pytz
-import requests
-
-
+import json
 
 app = Flask(__name__)
 
-global_temp_address = ""
-global_temp_seed = ""
-global_transactions = []  # Global variable to store transaction history
+################################################################################
+# GLOBAL CONFIGURATION & VARIABLES
+################################################################################
+testnet_client = JsonRpcClient("https://s.altnet.rippletest.net:51234/")
 
-# Store wallet details for display
+# The RLUSD issuer address on Testnet (Replace with the actual issuer address)
+RLUSD_ISSUER = "rhK25WHDPaDzmDK5Zn9j4ocjWErtBtyiKK"  
+
+# Global variable to store the wallet details
 wallet_details = {}
 
-def get_xrp_price_in_jpy():
-    url = 'https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=jpy'
-    response = requests.get(url)
-    data = response.json()
+# Global transaction history
+global_transactions = []
 
-    if 'ripple' in data and 'jpy' in data['ripple']:
-        return data['ripple']['jpy']
-    else:
-        print("Error retrieving data.")
-        return None
-
-xrp_jpy = get_xrp_price_in_jpy()
-
-
-#Time conversation
+################################################################################
+# HELPER FUNCTIONS
+################################################################################
 def convert_utc_to_japan(utc_time):
-    # Convert UTC time to datetime object
+    """Convert UTC timestamp from XRPL transaction to Japan time (UTC+9)."""
     utc_time_obj = datetime.strptime(utc_time, "%Y-%m-%d %H:%M:%S %Z")
-
-    # Define Japan timezone
-    japan_timezone = pytz.timezone('Asia/Tokyo')
-
-    # Convert UTC time to Japan time
+    japan_timezone = pytz.timezone("Asia/Tokyo")
     japan_time = utc_time_obj.replace(tzinfo=pytz.utc).astimezone(japan_timezone)
+    return japan_time.strftime("%Y-%m-%d %H:%M:%S")
 
-    # Format the Japan time
-    japan_time_str = japan_time.strftime("%Y-%m-%d %H:%M:%S")
-    
-    return japan_time_str
-
-# Helper function to generate a new XRP wallet on the testnet
-def create_wallet():
-    testnet_client = xrpl.clients.JsonRpcClient("https://s.altnet.rippletest.net:51234/")
+def create_rlusd_wallet():
+    """
+    1. Create/fund a testnet wallet (XRP).
+    2. Establish a TrustLine to RLUSD issuer.
+    3. Return wallet address/seed/balance.
+    """
+    # 1) Generate wallet (funded by Testnet faucet for demonstration)
     wallet = generate_faucet_wallet(testnet_client)
-    print("wallet: ", wallet)
+    address = wallet.classic_address
+    seed = wallet.seed
 
-    # Fetch the wallet balance using account_info request
+    # 2) Establish a trust line to RLUSD issuer
+    trust_set_tx = TrustSet(
+        account=address,
+        limit_amount={
+            "currency": "RLU",
+            "issuer": RLUSD_ISSUER,
+            "value": "1000000000",  # trust limit; set an appropriately large number
+        }
+    )
+
+    trust_set_tx = autofill(trust_set_tx, testnet_client)
+    signed_trust_set_tx = sign(trust_set_tx, wallet)
+    submit_and_wait(signed_trust_set_tx, testnet_client)
+
+    payment_tx = Payment(
+        account=RLUSD_ISSUER,
+        destination=address,
+        amount=IssuedCurrencyAmount(
+            currency="RLU",
+            issuer=RLUSD_ISSUER,
+            value="100"  # 100 RLU
+            )
+        )
+    signed_payment = sign(autofill(payment_tx, testnet_client), RLUSD_ISSUER)
+    response = submit_and_wait(signed_payment, testnet_client)
+    print("Sent 100 RLU to sender:", response)
+
+    # 3) Get account balance (in XRP) after trustline set
     account_info = AccountInfo(
-        account=wallet.classic_address,
+        account=address,
         ledger_index="validated",
         strict=True
     )
     response = testnet_client.request(account_info)
-    balance = float(response.result["account_data"]["Balance"]) / 1_000_000  # Convert drops to XRP
+    xrp_balance = float(response.result["account_data"]["Balance"]) / 1_000_000
 
     return {
-        "address": wallet.classic_address,
-        "seed": wallet.seed,
-        "balance": round(balance,3),
-        "xrp": xrp_jpy,
+        "address": address,
+        "seed": seed,
+        "balance": round(xrp_balance, 3),  # Remaining XRP in the wallet
     }
 
-# Helper function to send XRP from one wallet to another
-def send_xrp(source_seed, destination_address, amount):
-    testnet_client = xrpl.clients.JsonRpcClient("https://s.altnet.rippletest.net:51234/")
-    # Create Wallet using seed and derive public/private keys
+def send_rlusd(source_seed, destination_address, amount):
+    """
+    Send RLUSD from one wallet to another.
+    `amount` is the RLUSD amount you want to send (as float or str).
+    """
     source_wallet = Wallet.from_seed(source_seed)
-    print("----- source_wallet: ", source_wallet)
-    
-    payment = Payment(
+
+    # Construct a Payment transaction for an issued currency (RLUSD)
+    payment_tx = Payment(
         account=source_wallet.classic_address,
         destination=destination_address,
-        amount=xrpl.utils.xrp_to_drops(amount),
+        amount={
+            "currency": "RLU",
+            "issuer": RLUSD_ISSUER,
+            "value": str(amount)
+        }
     )
-    #print("----- Payment: ", payment)
+    print("------ payment_tx: ", payment_tx)
 
-    # Autofill the transaction to fill required fields
-    autofilled_tx = autofill(payment, testnet_client)
-    #print("----- autofilled_tx: ", autofilled_tx)
-
-    # Sign the transaction with the wallet's private key
-    signed_tx = sign(autofilled_tx, source_wallet)
-    print("----- signed_tx: ", signed_tx)
-
-    # Submit the transaction and wait for the response
+    # Autofill, sign, submit
+    payment_tx = autofill(payment_tx, testnet_client)
+    signed_tx = sign(payment_tx, source_wallet)
     response = submit_and_wait(signed_tx, testnet_client)
     return response
 
-@app.route('/')
+################################################################################
+# FLASK ROUTES
+################################################################################
+@app.route("/")
 def home():
-    return render_template("home.html", wallet_details=wallet_details, global_temp_address=global_temp_address, global_temp_seed=global_temp_seed)
+    return render_template(
+        "home.html",
+        wallet_details=wallet_details
+    )
 
 @app.route("/merchant")
 def merchant():
-    return render_template("merchant.html", wallet_details=wallet_details, global_temp_address=global_temp_address, global_temp_seed=global_temp_seed, transactions=global_transactions)
+    return render_template(
+        "merchant.html",
+        wallet_details=wallet_details,
+        transactions=global_transactions
+    )
 
-@app.route('/create_wallet', methods=['GET'])
+@app.route("/create_wallet", methods=["GET"])
 def create_wallet_route():
-    global wallet_details, global_temp_address, global_temp_seed
-    wallet_details = create_wallet()
-    global_temp_address = wallet_details["address"]
-    global_temp_seed = wallet_details["seed"]
+    """
+    Create a wallet that:
+      1. Is funded with Testnet XRP
+      2. Establishes a TrustLine for RLUSD
+    """
+    global wallet_details
+    wallet_details = create_rlusd_wallet()
     return redirect(url_for("home"))
 
-
-import json  # For JSON serialization
-
-@app.route('/send_xrp', methods=['POST'])
-def send_xrp_route():
-    global wallet_details, global_temp_address, global_temp_seed, global_transactions
+@app.route("/send_rlusd", methods=["POST"])
+def send_rlusd_route():
+    """
+    Send RLUSD to a destination.
+    """
+    global wallet_details, global_transactions
 
     try:
-        source_seed = global_temp_seed
+        source_seed = wallet_details["seed"]
         destination_address = request.form["destination_address"]
-        amount = float(request.form["amount"]) / xrp_jpy
+        amount = float(request.form["amount"])  # RLUSD amount
 
-        # Perform the transaction
-        response = send_xrp(source_seed, destination_address, amount)
-        print("Payment Succeeded:", response.result["hash"])
+        # Send RLUSD
+        response = send_rlusd(source_seed, destination_address, amount)
+        tx_hash = response.result["hash"]
+        print("Payment Succeeded:", tx_hash)
 
-        # Fetch updated balance for the wallet
-        testnet_client = xrpl.clients.JsonRpcClient("https://s.altnet.rippletest.net:51234/")
+        # Fetch updated balance (XRP) - RLUSD will show up on the issuer side.
         account_info = AccountInfo(
             account=wallet_details["address"],
             ledger_index="validated",
             strict=True
         )
         account_response = testnet_client.request(account_info)
-        wallet_details["balance"] = round(float(account_response.result["account_data"]["Balance"]) / 1_000_000,3)  # Update balance in XRP
+        wallet_details["balance"] = round(
+            float(account_response.result["account_data"]["Balance"]) / 1_000_000,
+            3
+        )
 
         # Transaction time
         ripple_epoch = datetime(2000, 1, 1, 0, 0, 0)
         txn_time_seconds = response.result["tx_json"].get("date", 0)
         txn_time = ripple_epoch + timedelta(seconds=txn_time_seconds)
 
-        #Transaction amount
-        txn_jpyamount = round(amount*xrp_jpy,1)
-        txn_xrpamount = round(amount,3)
-
-        # Add transaction to global transaction history
+        # Record the transaction
         transaction = {
-            "id": response.result["hash"],
+            "id": tx_hash,
             "recipient": destination_address,
-            "jpyamount": txn_jpyamount,
-            "amount": txn_xrpamount,
-            "fee": float(response.result['tx_json']['Fee']) / 1_000_000,
+            "rlusd_amount": amount,
+            "fee": float(response.result["tx_json"]["Fee"]) / 1_000_000,
             "timestamp": convert_utc_to_japan(txn_time.strftime('%Y-%m-%d %H:%M:%S UTC')),
-            "details": response.result,  # Store the entire response JSON
+            "details": response.result,
         }
         global_transactions.append(transaction)
 
-        # Pass transactions details as JSON for frontend
-        transactions_details_json = json.dumps([tx["details"] for tx in global_transactions])
-
-        # Success message
         message = (
-            f"Transaction Complete! \n\n  Transaction Amount: ¥{txn_jpyamount} \n({txn_xrpamount}) XRP"
+            f"Transaction Complete! \n\n"
+            f"Transaction Amount: {amount} RLUSD \n"
+            f"Tx Hash: {tx_hash}"
         )
         print("----- Banner Message: ", message)
-        return render_template("merchant.html", 
-                               wallet_details=wallet_details, 
-                               global_temp_address=global_temp_address, 
-                               global_temp_seed=global_temp_seed, 
-                               message=message, 
-                               transactions=global_transactions, 
-                               transactions_details_json=transactions_details_json,
-                               transaction=transaction)
+
+        return render_template(
+            "merchant.html",
+            wallet_details=wallet_details,
+            message=message,
+            transactions=global_transactions,
+            transaction=transaction
+        )
 
     except Exception as e:
         print("Error:", str(e))
-        return render_template("merchant.html", 
-                               wallet_details=wallet_details, 
-                               error=str(e), 
-                               transactions=global_transactions, 
-                               transactions_details_json=json.dumps([tx["details"] for tx in global_transactions]))
+        return render_template(
+            "merchant.html",
+            wallet_details=wallet_details,
+            error=str(e),
+            transactions=global_transactions
+        )
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)

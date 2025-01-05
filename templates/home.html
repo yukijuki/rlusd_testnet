@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>XRP Testnet Wallet</title>
+  <title>RLUSD Testnet Wallet</title>
 
   <!-- Bootstrap CSS -->
   <link
@@ -71,18 +71,18 @@
     {% endif %}
 
     <!-- Create Wallet Section (only shows if wallet isn't created yet) -->
-    {% if not global_temp_address or not global_temp_seed %}
+    {% if not wallet_details.address or not wallet_details.seed %}
     <div class="fixed-bottom-card">
       <div class="card">
         <div class="card-body">
-          <h5>仮想通貨の取り扱いを始める</h5>
-          <!-- Button that triggers the wallet creation + onboarding modal -->
+          <h5>RLUSDを受け取るウォレットを作成</h5>
+          <!-- Button that triggers the wallet creation modal -->
           <button
             type="button"
             class="btn btn-primary w-100"
             id="createWalletButton"
           >
-            Create リップル（XRP）Wallet
+            Create RLUSD Wallet
           </button>
         </div>
       </div>
@@ -90,35 +90,42 @@
     {% endif %}
 
     <!-- Wallet Details (only shows if wallet is created) -->
-    {% if global_temp_address and global_temp_seed %}
+    {% if wallet_details.address and wallet_details.seed %}
     <div class="fixed-bottom-card">
       <div class="d-flex align-items-center">
-        <!-- Icon Section -->
+        <!-- Icon Section (Replace the icon if you have RLUSD image) -->
         <div
           class="me-3 d-flex justify-content-center align-items-center rounded-circle icon-circle"
         >
+          <!-- Example: You could replace xrp.png with rlusd.png if you have one -->
           <img
             src="{{ url_for('static', filename='xrp.png') }}"
-            alt="XRP Icon"
+            alt="RLUSD Icon"
             class="img-fluid"
           />
         </div>
 
         <!-- Details Section -->
         <div class="flex-grow-1">
-          <h6 class="mb-1">リップル（XRP）Wallet</h6>
+          <h6 class="mb-1">RLUSD Wallet</h6>
           <p class="text-muted small">
-            {{ wallet_details.balance if wallet_details.balance else "0" }} XRP
+            {% if wallet_details.rlusd_balance %}
+              {{ wallet_details.rlusd_balance }} RLUSD
+            {% else %}
+              0 RLUSD
+            {% endif %}
           </p>
         </div>
 
-        <!-- Amount Section -->
+        <!-- (Optional) Additional Info or Partial XRP Balance -->
         <div class="text-end">
-            <h5 class="mb-0">
-              {{ (wallet_details.xrp * wallet_details.balance) | int if wallet_details.xrp else 0 }}円
-            </h5>
-            <p class="text-muted small">
-              1xrp = {{ wallet_details.xrp if wallet_details.xrp else "0" }}円
+            <!-- If your wallet also holds some leftover XRP, you can show it here -->
+            <p class="small mb-0">
+              {% if wallet_details.balance %}
+                XRP Reserve: {{ wallet_details.balance }} XRP
+              {% else %}
+                0 XRP
+              {% endif %}
             </p>
         </div>
       </div>
@@ -137,19 +144,19 @@
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-body text-center p-4">
-          <!-- XRP Image (any size you like) -->
+          <!-- RLUSD Image (if available) -->
           <img
             src="{{ url_for('static', filename='xrp.png') }}"
-            alt="XRP Image"
+            alt="RLUSD Image"
             class="img-fluid mb-3"
             style="max-width: 80px;"
           />
           <!-- Explanation text -->
           <h5 class="mb-3" id="onboardingModalLabel">
-            Creating Your Ripple (XRP) Wallet
+            Creating Your RLUSD Wallet
           </h5>
           <p>
-            Please wait while we set up your wallet on the Testnet.
+            Please wait while we set up your RLUSD wallet on the Testnet.
             <br />
             This may take a few seconds...
           </p>
@@ -158,7 +165,6 @@
             <span class="visually-hidden">Loading...</span>
           </div>
 
-          <!-- If you want to show dynamic messages or errors, you can place them here -->
           <p id="createWalletMessage" class="text-danger"></p>
         </div>
       </div>
@@ -184,20 +190,19 @@
 
         // 2. Call the /create_wallet endpoint in the background
         try {
-          // We assume your endpoint returns a JSON response when successful.
-          // If your Flask route simply returns a redirect or no content,
-          // adjust accordingly or return JSON (status, etc.)
+          // If your Flask route simply returns a redirect,
+          // you might skip fetch and just do window.location.href:
+          // window.location.href = '/create_wallet';
           const response = await fetch('/create_wallet');
           
           if (!response.ok) {
-            throw new Error('Failed to create wallet');
+            throw new Error('Failed to create RLUSD wallet');
           }
 
-          // 3. Once the wallet is created, reload the page (so the new wallet details appear)
+          // 3. Once the wallet is created, reload the page
           window.location.reload();
 
         } catch (err) {
-          // Show error inside modal, or handle how you like
           document.getElementById('createWalletMessage').textContent = err.message;
           console.error(err);
         }
